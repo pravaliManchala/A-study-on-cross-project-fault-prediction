@@ -1,6 +1,7 @@
 import math,os,random,sys
 import numpy as np
 import pandas as pd
+import warnings
 from statistics import mean, median, mode, stdev
 from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import jensenshannon
@@ -163,8 +164,8 @@ def Applicability_Score():
         training_data = tra
         testing_data = test_set[:test_len,:]
         apl_score[row][colm] = Classification_Score(training_data, testing_data)
-
-#Phase I: Source Project selection (SAPS)
+"""
+#Direct SAPS with selected sources
 def classi_SPS_fun(X_train,y_train,X_test,y_test):
     sc=StandardScaler().fit(X_train)
     X_train=sc.transform(X_train)
@@ -222,33 +223,35 @@ def classi_SPS_fun(X_train,y_train,X_test,y_test):
     bal=1-(math.sqrt((0-FPR)**2+(1-TPR)**2)/math.sqrt(2))
     arr[cnt:cnt+7]=[FPR, TPR, f1_score(y_test,y_pred5,average="micro"), roc_auc_score(y_test, classi5.predict_proba(X_test)[:, 1]), math.sqrt(TPR*TNR), matthews_corrcoef(y_test,y_pred5),bal]
     return arr
+"""
+warnings.filterwarnings('ignore')
+
+#Phase I: Source Project selection (SAPS)
+########################################
 
 list1=np.array(['ant-1.7.csv','arc.csv', 'camel-1.6.csv','ivy-2.0.csv','jedit-4.2.csv','log4j-1.0.csv','lucene-2.0.csv','poi-2.0.csv','redaktor.csv','synapse-1.2.csv','tomcat.csv','velocity-1.6.csv','xalan-2.4.csv','xerces-1.3.csv'])
 #list1=np.array(['CM1.csv','KC3.csv','MC1.csv','MC2.csv','MW1.csv','PC1.csv','PC2.csv','PC3.csv','PC4.csv','PC5.csv'])
 
-#computing scores SAPS
 sc = StandardScaler()
 sc1 = StandardScaler()
 sim_score = np.zeros((len(list1),len(list1)))
 apl_score = np.zeros((len(list1),len(list1)))
 Similarity_Score_WSR()
 Applicability_Score()
-scores = (1-sim_score)+apl_score
 source_projects_ind = np.zeros((len(list1),len(list1)))
 source_projects_ind1 = np.zeros((len(list1),len(list1)))
 for kk in range(len(list1)):
-  print(list1[kk])
-  sum_ind1 = np.where((scores[kk])>mean((scores[kk])))
   train_sources_ind1 = np.where((1-sim_score[kk])>(mean(1-sim_score[kk])))
   train_sources_ind2 = np.where(apl_score[kk]>(mean(apl_score[kk])))
   sources_ind = np.intersect1d(train_sources_ind1[0],train_sources_ind2[0])
   source_projects_ind[kk,sources_ind] = 1
-  source_projects_ind1[kk,sum_ind1[0]] = 1
+print("List of source projects for each target Index representation:")
 print(source_projects_ind)
 
 #reading target project
 for i in range(len(list1)):
   test_ds =list1[i]
+  print("target project: ",test_ds)
   PATH=os.path.join(r'/content',test_ds)
   test=pd.read_csv(PATH)
   XY_test=test.values
@@ -269,8 +272,10 @@ for i in range(len(list1)):
   x_test = XY_test[:,:-1]
   y_train = aXY_train[:,-1]
   y_test = XY_test[:,-1]
+  print("SAPS data: ", x_train.shape, y_train.shape, x_test.shape, y_test.shape)
 
   #Phase II: Resampling
+  #############################
   indm = np.where(aXY_train[:,-1]==0)
   train_maj = aXY_train[indm[0],:-1]
   indmi = np.where(aXY_train[:,-1]==1)
@@ -279,7 +284,7 @@ for i in range(len(list1)):
   min_len = len(train_min)
   maj_red = int(maj_len/2)
   min_inc = maj_red-min_len
-  print(maj_len,min_len,maj_red,min_inc)
+  #print(maj_len,min_len,maj_red,min_inc)
 
   #deviding target data into 2 clusters
   model=KMeans(init='k-means++',n_clusters=2)
@@ -300,7 +305,7 @@ for i in range(len(list1)):
     else:
       w,p=wilcoxon(difrn)
       temp_list[ii] = temp_list[ii]+1 if(p>0.05) else temp_list[ii]+0
-   print(ii,temp_list[ii])
+   #print(ii,temp_list[ii])
    ii=ii+1
   train_maj = np.column_stack((train_maj,temp_list))
   indm = np.argsort(train_maj[:,-1])[::-1][:maj_red]
@@ -331,111 +336,109 @@ for i in range(len(list1)):
   X_test = XY_test[:,:-1]
   y_test = XY_test[:,-1]
   np.any(np.isnan(X_train))
+  print("resampled data: ", X_train.shape, y_train.shape, X_test.shape, y_test.shape)
 
-#Phase III: Stacked Autoencoder
-##########################
+  #Phase III: Stacked Autoencoder
+  ##########################
+  reset_graph()
+  d_inputs = colc-1
+  d_hidden1 = 10
+  d_hidden2 = 4  # codings
+  d_hidden3 = d_hidden1
+  d_outputs = d_inputs
+  n_class = 2
 
-reset_graph()
+  learning_rate = 0.01
+  l2_reg = 0.0005
 
-d_inputs = colc-1
-d_hidden1 = 10
-d_hidden2 = 4  # codings
-d_hidden3 = d_hidden1
-d_outputs = d_inputs
-n_class = 2
+  initializer = tf.contrib.layers.variance_scaling_initializer()
+  activation = tf.nn.elu
+  regularizer = tf.contrib.layers.l2_regularizer(l2_reg)
 
-learning_rate = 0.01
-l2_reg = 0.0005
+  ##SAE Unsupervised learning
+  #Input data
+  X = tf.placeholder(tf.float32,shape=[None, d_inputs])
+  #Hidden layer1 (first code generating layer)
+  weights1_init = initializer([d_inputs, d_hidden1])
+  weights1 = tf.Variable(weights1_init, dtype=tf.float32, name="weights1")
+  biases1 = tf.Variable(tf.zeros(d_hidden1), name="biases1")
+  hidden1 = activation(tf.matmul(X, weights1) + biases1)
+  #Output layer (input reconstruction)
+  weights1_ = tf.transpose(weights1,name="weights1_")
+  biases1_ = tf.Variable(tf.zeros(d_outputs),name="biases1_")
+  outputs1_ = activation(tf.matmul(hidden1,weights1_) + biases1_)
+  #Objective function: MSE + L2 penalty
+  reconstruction_loss_phase1 = tf.reduce_mean(tf.square(outputs1_ - X))
+  reg_loss_phase1 = regularizer(weights1)
+  J_phase1 = reconstruction_loss_phase1 + reg_loss_phase1
+  optimizer_phase1 = tf.train.AdamOptimizer(learning_rate)
+  training_op_phase1 = optimizer_phase1.minimize(J_phase1)
 
-initializer = tf.contrib.layers.variance_scaling_initializer()
-activation = tf.nn.elu
-regularizer = tf.contrib.layers.l2_regularizer(l2_reg)
+  #SAE supervised learning (also building its own tf subgraph)
+  #Input data (intermediate representation)
+  Z = tf.placeholder(tf.float32,shape=[None, d_hidden1])
+  #Hidden layer2 (second code generating layer)
+  weights2_init = initializer([d_hidden1, d_hidden2])
+  weights2 = tf.Variable(weights2_init, dtype=tf.float32, name="weights2")
+  biases2 = tf.Variable(tf.zeros(d_hidden2), name="biases2")
+  hidden2_ = activation(tf.matmul(Z, weights2) + biases2)
+  #Hidden layer3 (second intermediate representation reconstruction layer = output for this graph)
+  weights2_ = tf.transpose(weights2,name="weights2_")
+  biases2_ = tf.Variable(tf.zeros(d_hidden1),name="biases2_")
+  outputs2_ = activation(tf.matmul(hidden2_,weights2_) + biases2_)
+  #Objective function: MSE + L2 penalty
+  reconstruction_loss_phase2 = tf.reduce_mean(tf.square(outputs2_ - Z))
+  reg_loss_phase2 = regularizer(weights2)
+  J_phase2 = reconstruction_loss_phase2 + reg_loss_phase2
 
-##SAE Unsupervised learning
-#Input data
-X = tf.placeholder(tf.float32,shape=[None, d_inputs])
-#Hidden layer1 (first code generating layer)
-weights1_init = initializer([d_inputs, d_hidden1])
-weights1 = tf.Variable(weights1_init, dtype=tf.float32, name="weights1")
-biases1 = tf.Variable(tf.zeros(d_hidden1), name="biases1")
-hidden1 = activation(tf.matmul(X, weights1) + biases1)
-#Output layer (input reconstruction)
-weights1_ = tf.transpose(weights1,name="weights1_")
-biases1_ = tf.Variable(tf.zeros(d_outputs),name="biases1_")
-outputs1_ = activation(tf.matmul(hidden1,weights1_) + biases1_)
-#Objective function: MSE + L2 penalty
-reconstruction_loss_phase1 = tf.reduce_mean(tf.square(outputs1_ - X))
-reg_loss_phase1 = regularizer(weights1)
-J_phase1 = reconstruction_loss_phase1 + reg_loss_phase1
-optimizer_phase1 = tf.train.AdamOptimizer(learning_rate)
-training_op_phase1 = optimizer_phase1.minimize(J_phase1)
+  optimizer_phase2 = tf.train.AdamOptimizer(learning_rate)
+  training_op_phase2 = optimizer_phase2.minimize(J_phase2)
 
+  #Stacking the layers together to build the multilayer autoencoder
+  #Reconnecting first coding layer with the second one
+  hidden2 = activation(tf.matmul(hidden1, weights2) + biases2)
+  hidden3 = activation(tf.matmul(hidden2, weights2_) + biases2_)
+  #Reconnecting first decoding layer with the output one
+  outputs = activation(tf.matmul(hidden3, weights1_) + biases1_)
+  #Stacking the layers together to build a classifier
+  weights3_init_stack = initializer([d_hidden2, n_class])
+  weights3_stack = tf.Variable(weights3_init_stack, dtype=tf.float32, name="weights3_mlp")
+  biases3_stack = tf.Variable(tf.zeros(n_class), name="biases3_mlp")
+  logit_y = tf.matmul(hidden2, weights3_stack) + biases3_stack
+  y = tf.placeholder(tf.int32, shape=[None])
+  y_pred_prob = tf.nn.softmax(logit_y)
+  y_pred = tf.argmax(y_pred_prob,1)
+  cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logit_y)
+  reg_loss = regularizer(weights1) + regularizer(weights2) + regularizer(weights3_stack)
+  loss = cross_entropy + reg_loss
+  optimizer = tf.train.AdamOptimizer(learning_rate)
+  training_op = optimizer.minimize(loss)
 
-#SAE supervised learning (also building its own tf subgraph)
-#Input data (intermediate representation)
-Z = tf.placeholder(tf.float32,shape=[None, d_hidden1])
-#Hidden layer2 (second code generating layer)
-weights2_init = initializer([d_hidden1, d_hidden2])
-weights2 = tf.Variable(weights2_init, dtype=tf.float32, name="weights2")
-biases2 = tf.Variable(tf.zeros(d_hidden2), name="biases2")
-hidden2_ = activation(tf.matmul(Z, weights2) + biases2)
-#Hidden layer3 (second intermediate representation reconstruction layer = output for this graph)
-weights2_ = tf.transpose(weights2,name="weights2_")
-biases2_ = tf.Variable(tf.zeros(d_hidden1),name="biases2_")
-outputs2_ = activation(tf.matmul(hidden2_,weights2_) + biases2_)
-#Objective function: MSE + L2 penalty
-reconstruction_loss_phase2 = tf.reduce_mean(tf.square(outputs2_ - Z))
-reg_loss_phase2 = regularizer(weights2)
-J_phase2 = reconstruction_loss_phase2 + reg_loss_phase2
-
-optimizer_phase2 = tf.train.AdamOptimizer(learning_rate)
-training_op_phase2 = optimizer_phase2.minimize(J_phase2)
-
-#Stacking the layers together to build the multilayer autoencoder
-#Reconnecting first coding layer with the second one
-hidden2 = activation(tf.matmul(hidden1, weights2) + biases2)
-hidden3 = activation(tf.matmul(hidden2,weights2_) + biases2_)
-#Reconnecting first decoding layer with the output one
-outputs = activation(tf.matmul(hidden3,weights1_) + biases1_)
-#Stacking the layers together to build a classifier
-weights3_init_stack = initializer([d_hidden2, n_class])
-weights3_stack = tf.Variable(weights3_init_stack, dtype=tf.float32, name="weights3_mlp")
-biases3_stack = tf.Variable(tf.zeros(n_class), name="biases3_mlp")
-logit_y = tf.matmul(hidden2, weights3_stack) + biases3_stack
-y = tf.placeholder(tf.int32, shape=[None])
-y_pred_prob = tf.nn.softmax(logit_y)
-y_pred = tf.argmax(y_pred_prob,1)
-cross_entropy = tf.nn.sparse_softmax_cross_entropy_with_logits(labels=y, logits=logit_y)
-reg_loss = regularizer(weights1) + regularizer(weights2) + regularizer(weights3_stack)
-loss = cross_entropy + reg_loss
-optimizer = tf.train.AdamOptimizer(learning_rate)
-training_op = optimizer.minimize(loss)
-
-batch_size = 50
-n_labeled_instances = len(x_train)
-init = tf.global_variables_initializer()
-saver = tf.train.Saver() #one saver for all sessions
-with tf.Session() as sess:
+  batch_size = 50
+  n_labeled_instances = len(X_train)
+  init = tf.global_variables_initializer()
+  saver = tf.train.Saver() #one saver for all sessions
+  with tf.Session() as sess:
     n_epochs = 30
     init.run()
     for epoch in range(n_epochs):
-        n_batches = len(x_train) // batch_size
-        x_train_tmp=x_train
+        n_batches = len(X_train) // batch_size
+        X_train_tmp=X_train
         for iteration in range(n_batches):
             #print("epoch--batch: ", epoch, iteration)
             print("\r{}%".format(100 * iteration // n_batches), end="")
             sys.stdout.flush()
-            X_batch= x_train_tmp[:batch_size]
-            x_train_temp=x_train_tmp[batch_size:]
+            X_batch= X_train_tmp[:batch_size]
+            X_train_temp=X_train_tmp[batch_size:]
             sess.run(training_op_phase1, feed_dict={X: X_batch})
-        if(x_train_tmp.size != 0):
-            sess.run(training_op_phase1, feed_dict={X: x_train_tmp})
-        ae1_loss = J_phase1.eval(feed_dict={X: x_train})
+        if(X_train_tmp.size != 0):
+            sess.run(training_op_phase1, feed_dict={X: X_train_tmp})
+        ae1_loss = J_phase1.eval(feed_dict={X: X_train})
         print(ae1_loss)
-    Z_train = sess.run(hidden1,feed_dict={X: x_train})  #compressed data Z_train of x_train
+    Z_train = sess.run(hidden1,feed_dict={X: X_train})  #compressed data Z_train of x_train
 
     for epoch in range(n_epochs):
-        n_batches = len(x_train) // batch_size
+        n_batches = len(X_train) // batch_size
         Z_train_tmp=Z_train
         for iteration in range(n_batches):
             #print("epoch--batch: ", epoch, iteration)
@@ -449,38 +452,38 @@ with tf.Session() as sess:
             sess.run(training_op_phase2, feed_dict={Z: Z_train_tmp})
         ae2_loss = J_phase2.eval(feed_dict={Z: Z_train})
         print(ae2_loss)
-    Z1_train = sess.run(hidden2,feed_dict={X: x_train})
+    Z1_train = sess.run(hidden2,feed_dict={X: X_train})
     print("")
     print("---------------------------------------------------------------------------------")
     print("reconstructed input")
-    results = sess.run(hidden2,feed_dict={X: x_test})
+    results = sess.run(hidden2,feed_dict={X: X_test})
     print("SAE text data output -- len(results)")
 
     #Supervised learning
-    n_epochs = 4
+    n_epochs = 10
     weights1.eval()
     weights2.eval()
     for epoch in range(n_epochs):
         n_batches = n_labeled_instances // batch_size
-        x_train_tmp=x_train
+        X_train_tmp=X_train
         indices = np.random.permutation(n_labeled_instances)[:batch_size]
         for iteration in range(n_batches):
             #print("epoch--batch: ", epoch, iteration)
             print("\r{}%".format(100 * iteration // n_batches), end="")
             sys.stdout.flush()
-            X_batch, y_batch = x_train_tmp[indices], y_train[indices]
+            X_batch, y_batch = X_train_tmp[indices], y_train[indices]
             indices=indices[batch_size:]
             sess.run(training_op, feed_dict={X: X_batch, y: y_batch})  #for weight optimization
         if(len(indices) != 0):
-            X_batch, y_batch = x_train_tmp[indices], y_train[indices]
+            X_batch, y_batch = X_train_tmp[indices], y_train[indices]
             sess.run(training_op, feed_dict={X: X_batch, y: y_batch})
         correct_prediction = tf.equal(tf.argmax(y_pred_prob,1), tf.cast(y, tf.int64))
         accuracy = tf.reduce_mean(tf.cast(correct_prediction, tf.float32))
-        print("accuracy", sess.run(accuracy, feed_dict={X: x_test, y: y_test}))
+        print("accuracy", sess.run(accuracy, feed_dict={X: X_test, y: y_test}))
         prediction2 = y_pred_prob
-        y_test_predicted2 = prediction2.eval(feed_dict={X: x_test}, session=sess)
+        y_test_predicted2 = prediction2.eval(feed_dict={X: X_test}, session=sess)
         prediction = tf.argmax(y_pred_prob,1)   #convert probabilities of [0.1 0.9] to 0/1
-        y_test_predicted = prediction.eval(feed_dict={X: x_test}, session=sess)
+        y_test_predicted = prediction.eval(feed_dict={X: X_test}, session=sess)
         print(y_test_predicted)
         print(y_test)
         cm=confusion_matrix(y_test, y_test_predicted)
@@ -492,7 +495,7 @@ with tf.Session() as sess:
         TPR = tp/(tp+fn)
         TNR = tn/(tn+fp)
         FPR = (fp/(fp+tn))
-        f_msr = f1_score(y_test,y_test_predicted,average='micro')
         roc = roc_auc_score(y_test,y_test_predicted)
         g_mean = math.sqrt(TPR*TNR)
-        print(FPR,TPR,f_msr,roc,g_mean)
+        bal=1-(math.sqrt((0-FPR)**2+(1-TPR)**2)/math.sqrt(2))
+        print(FPR,TPR,roc,g_mean,matthews_corrcoef(y_test,y_test_predicted),bal)
